@@ -1,0 +1,18 @@
+# Python environment and cache
+.venv/
+__pycache__/
+*.py[cod]
+
+# Data and indexes
+/data/
+/mental_health_index/
+
+# Editor and OS-specific
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+.env
