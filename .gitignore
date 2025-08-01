@@ -3,8 +3,7 @@
 __pycache__/
 *.py[cod]
 
-# Data and indexes
-/data/
+# Indexes
 /mental_health_index/
 
 # Editor and OS-specific
