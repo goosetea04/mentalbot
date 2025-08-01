@@ -6,6 +6,7 @@ from datetime import datetime
 import re
 import io
 import base64
+import time
 
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.vectorstores import FAISS
@@ -229,6 +230,58 @@ st.markdown("""
         font-size: 1.1rem;
         margin-bottom: 2rem;
     }
+    
+    .tts-loading {
+        background: linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%);
+        color: #2d3436;
+        padding: 10px 15px;
+        border-radius: 10px;
+        margin: 5px 0;
+        text-align: center;
+        font-size: 0.9em;
+        animation: pulse 1.5s ease-in-out infinite alternate;
+    }
+    
+    @keyframes pulse {
+        from { opacity: 0.7; }
+        to { opacity: 1; }
+    }
+    
+    .bot-loading {
+        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+        color: #2d3748;
+        padding: 15px 20px;
+        border-radius: 20px 20px 20px 5px;
+        margin: 10px auto 10px 0;
+        max-width: 85%;
+        box-shadow: 0 4px 15px rgba(168, 237, 234, 0.3);
+        line-height: 1.6;
+        text-align: center;
+        animation: pulse 1.5s ease-in-out infinite alternate;
+    }
+    
+    .typing-dots {
+        display: inline-block;
+        animation: typing 1.4s infinite;
+    }
+    
+    .typing-dots::after {
+        content: '...';
+        animation: dots 1.4s steps(4, end) infinite;
+    }
+    
+    @keyframes typing {
+        0%, 20% { opacity: 1; }
+        50% { opacity: 0.7; }
+        100% { opacity: 1; }
+    }
+    
+    @keyframes dots {
+        0%, 20% { content: ''; }
+        40% { content: '.'; }
+        60% { content: '..'; }
+        80%, 100% { content: '...'; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -241,6 +294,9 @@ if "chat_history" not in st.session_state:
 if "qa_chain" not in st.session_state:
     st.session_state.qa_chain = initialize_qa_chain()
 
+if "generating_response" not in st.session_state:
+    st.session_state.generating_response = False
+
 # Header
 st.title("💙 Mental Health Support")
 st.markdown("<p class='subtitle'>A safe space for mental wellness guidance</p>", unsafe_allow_html=True)
@@ -250,10 +306,11 @@ with st.sidebar:
     st.markdown("### 🆘 Crisis Resources")
     st.markdown("""
     <div class="sidebar-section">
-    <strong>24/7 Support:</strong><br>
-    📞 <strong>988</strong> - Crisis Lifeline<br>
-    💬 <strong>Text HOME to 741741</strong><br>
-    🚨 <strong>911</strong> - Emergency<br>
+        <strong>24/7 Support (Canberra):</strong><br>
+        📞 <strong>Lifeline: 13 11 14</strong> – Crisis Support<br>
+        💬 <strong>Text 0477 13 11 14</strong> – Lifeline Text Service<br>
+        🧠 <strong>Beyond Blue: 1300 22 4636</strong> – Mental Health Support<br>
+        🚨 <strong>000</strong> – Emergency Services<br>
     </div>
     """, unsafe_allow_html=True)
     
@@ -307,32 +364,66 @@ def enhance_text_for_speech(text):
     
     return text.strip()
 
-# Option 4: OpenAI TTS (good balance of quality and ease)
-def text_to_speech_openai(text):
+def text_to_speech_openai_with_progress(text):
     """
-    OpenAI TTS - requires openai package (you already have this)
+    OpenAI TTS with progress bar
     """
     try:
         from openai import OpenAI
         
+        # Show loading message
+        loading_placeholder = st.empty()
+        loading_placeholder.markdown('<div class="tts-loading">🎵 Converting to speech...</div>', unsafe_allow_html=True)
+        
+        # Create progress bar
+        progress_bar = st.progress(0)
+        
+        # Simulate progress steps
+        progress_bar.progress(10)
+        time.sleep(0.1)
+        
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         enhanced_text = enhance_text_for_speech(text)
         
+        progress_bar.progress(30)
+        time.sleep(0.1)
+        
         response = client.audio.speech.create(
             model="tts-1",              # Faster model
-            voice="nova",            # Friendly, natural-sounding voice
+            voice="nova",               # Friendly, natural-sounding voice
             input=enhanced_text,
-            speed=0.98                 # Slightly faster, more casual flow
+            speed=0.98                  # Slightly faster, more casual flow
         )
-
+        
+        progress_bar.progress(70)
+        time.sleep(0.1)
         
         audio_base64 = base64.b64encode(response.content).decode()
-        return f"""
+        
+        progress_bar.progress(90)
+        time.sleep(0.1)
+        
+        audio_html = f"""
         <audio controls autoplay style="width: 100%; margin: 10px 0;">
             <source src="data:audio/mpeg;base64,{audio_base64}" type="audio/mpeg">
         </audio>
         """
-    except Exception:
+        
+        progress_bar.progress(100)
+        time.sleep(0.2)
+        
+        # Clear loading indicators
+        loading_placeholder.empty()
+        progress_bar.empty()
+        
+        return audio_html
+        
+    except Exception as e:
+        # Clear loading indicators on error
+        if 'loading_placeholder' in locals():
+            loading_placeholder.empty()
+        if 'progress_bar' in locals():
+            progress_bar.empty()
         return None
 
 # Voice input handling function
@@ -360,7 +451,7 @@ def process_voice_input():
         except Exception as e:
             st.error(f"Something went wrong: {e}")
 
-# Chat display with auto voice
+# Chat display with auto voice and progress bars
 if st.session_state.chat_history:
     for i, (role, message) in enumerate(st.session_state.chat_history):
         if role == "user":
@@ -373,9 +464,18 @@ if st.session_state.chat_history:
             
             # Auto-generate audio for bot messages if voice is available
             if VOICE_FEATURES_AVAILABLE and role == "bot":
-                audio_html = text_to_speech_openai(message)
-                if audio_html:
-                    st.markdown(audio_html, unsafe_allow_html=True)
+                # Use a unique key for each message to avoid conflicts
+                audio_key = f"audio_{i}_{hash(message[:50])}"
+                
+                # Only generate audio for the latest bot message to avoid multiple audio generations
+                if i == len(st.session_state.chat_history) - 1:
+                    audio_html = text_to_speech_openai_with_progress(message)
+                    if audio_html:
+                        st.markdown(audio_html, unsafe_allow_html=True)
+
+# Show loading bubble if bot is generating response
+if st.session_state.generating_response:
+    st.markdown('<div class="bot-loading">💭 <span class="typing-dots">Thinking</span></div>', unsafe_allow_html=True)
 
 # Chat input with microphone button
 input_col, mic_col = st.columns([5, 1])
@@ -391,27 +491,40 @@ with mic_col:
         st.markdown('<div style="padding: 12px; text-align: center; color: #999;">🎤</div>', unsafe_allow_html=True)
 
 if user_input:
-    try:
-        # Check for crisis
-        is_crisis = detect_crisis_keywords(user_input)
-        
-        # Get response
-        response = st.session_state.qa_chain.invoke({"question": user_input})
-        answer = response["answer"]
-        
-        # Add to history
-        st.session_state.chat_history.append(("user", user_input))
-        
-        if is_crisis:
-            crisis_response = f"I can see you're going through something really difficult right now. You're not alone. 💙\n\n{CRISIS_RESOURCES}\n\n{answer}"
-            st.session_state.chat_history.append(("bot", crisis_response))
-        else:
-            st.session_state.chat_history.append(("bot", answer))
-        
-        st.rerun()
-        
-    except Exception as e:
-        st.error(f"Something went wrong: {e}")
+    # Add user message immediately to chat
+    st.session_state.chat_history.append(("user", user_input))
+    st.session_state.generating_response = True
+    st.rerun()
+
+# Process the response if we're in generating state
+if st.session_state.generating_response and st.session_state.chat_history:
+    last_message = st.session_state.chat_history[-1]
+    if last_message[0] == "user":  # Last message is from user and we need to respond
+        try:
+            user_question = last_message[1]
+            
+            # Check for crisis
+            is_crisis = detect_crisis_keywords(user_question)
+            
+            # Get response
+            response = st.session_state.qa_chain.invoke({"question": user_question})
+            answer = response["answer"]
+            
+            # Add bot response to history
+            if is_crisis:
+                crisis_response = f"I can see you're going through something really difficult right now. You're not alone. 💙\n\n{CRISIS_RESOURCES}\n\n{answer}"
+                st.session_state.chat_history.append(("bot", crisis_response))
+            else:
+                st.session_state.chat_history.append(("bot", answer))
+            
+            # Stop generating
+            st.session_state.generating_response = False
+            st.rerun()
+            
+        except Exception as e:
+            st.session_state.chat_history.append(("bot", f"I apologize, but I encountered an error: {e}. Please try again."))
+            st.session_state.generating_response = False
+            st.rerun()
 
 # Simple action buttons
 col1, col2 = st.columns(2)
@@ -419,6 +532,7 @@ col1, col2 = st.columns(2)
 with col1:
     if st.button("🔄 New Conversation", use_container_width=True):
         st.session_state.chat_history = []
+        st.session_state.generating_response = False
         welcome_msg = random.choice(WELCOME_MESSAGES)
         st.session_state.chat_history.append(("bot", welcome_msg))
         st.rerun()
