@@ -3,6 +3,8 @@ from dotenv import load_dotenv
 import os
 import random
 from datetime import datetime
+import base64
+import io
 
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.vectorstores import FAISS
@@ -10,6 +12,16 @@ from langchain.llms import OpenAI
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 from langchain.prompts import PromptTemplate
+
+# Audio processing imports
+try:
+    import speech_recognition as sr
+    from gtts import gTTS
+    import pygame
+    VOICE_FEATURES_AVAILABLE = True
+except ImportError:
+    VOICE_FEATURES_AVAILABLE = False
+    st.warning("⚠️ Voice features require additional packages. Install with: pip install SpeechRecognition gtts pygame pyaudio")
 
 # Load environment variables
 load_dotenv()
@@ -77,6 +89,98 @@ qa_chain = ConversationalRetrievalChain.from_llm(
     return_source_documents=True,
     combine_docs_chain_kwargs={"prompt": custom_prompt}
 )
+
+# Voice processing functions
+def initialize_speech_recognition():
+    """Initialize the speech recognition engine"""
+    if not VOICE_FEATURES_AVAILABLE:
+        return None
+    return sr.Recognizer()
+
+def listen_for_speech(recognizer, duration=5):
+    """Listen for speech input and convert to text"""
+    if not VOICE_FEATURES_AVAILABLE or not recognizer:
+        return None
+    
+    try:
+        with sr.Microphone() as source:
+            st.info("🎤 Listening... Speak now!")
+            recognizer.adjust_for_ambient_noise(source, duration=1)
+            audio = recognizer.listen(source, timeout=duration, phrase_time_limit=duration)
+            
+        st.info("🔄 Processing your speech...")
+        text = recognizer.recognize_google(audio)
+        return text
+    except sr.WaitTimeoutError:
+        st.warning("⏰ No speech detected. Please try again.")
+        return None
+    except sr.UnknownValueError:
+        st.warning("🤔 Couldn't understand the audio. Please try speaking clearly.")
+        return None
+    except sr.RequestError as e:
+        st.error(f"❌ Speech recognition service error: {e}")
+        return None
+    except Exception as e:
+        st.error(f"❌ An error occurred: {e}")
+        return None
+
+def text_to_speech(text, lang='en'):
+    """Convert text to speech and return audio data"""
+    if not VOICE_FEATURES_AVAILABLE:
+        return None
+    
+    try:
+        # Clean text for TTS (remove markdown and special characters)
+        clean_text = clean_text_for_tts(text)
+        
+        # Create TTS object
+        tts = gTTS(text=clean_text, lang=lang, slow=False)
+        
+        # Save to bytes buffer
+        audio_buffer = io.BytesIO()
+        tts.write_to_fp(audio_buffer)
+        audio_buffer.seek(0)
+        
+        return audio_buffer.getvalue()
+    except Exception as e:
+        st.error(f"❌ Text-to-speech error: {e}")
+        return None
+
+def clean_text_for_tts(text):
+    """Clean text for better TTS output"""
+    import re
+    
+    # Remove markdown formatting
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)  # Bold text
+    text = re.sub(r'\*(.*?)\*', r'\1', text)      # Italic text
+    text = re.sub(r'`(.*?)`', r'\1', text)        # Code text
+    text = re.sub(r'#{1,6}\s', '', text)          # Headers
+    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)  # Links
+    
+    # Remove emojis for cleaner speech
+    text = re.sub(r'[^\w\s.,!?;:\'-]', '', text)
+    
+    # Clean up multiple spaces and newlines
+    text = re.sub(r'\n+', '. ', text)
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Remove crisis resources formatting for speech
+    text = re.sub(r'🚨.*?Crisis Text Line.*?741741', 'If you need immediate help, please call 988 or text HOME to 741741', text)
+    
+    return text.strip()
+
+def create_audio_player(audio_data, key):
+    """Create an audio player widget"""
+    if audio_data:
+        audio_base64 = base64.b64encode(audio_data).decode()
+        audio_html = f"""
+        <audio controls style="width: 200px; height: 30px;">
+            <source src="data:audio/mp3;base64,{audio_base64}" type="audio/mp3">
+            Your browser does not support the audio element.
+        </audio>
+        """
+        return audio_html
+    return None
 
 # Crisis keywords detection function
 def detect_crisis_keywords(text):
@@ -157,7 +261,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Enhanced CSS Styling
+# Enhanced CSS Styling (keeping original styles and adding voice features)
 st.markdown(
     """
     <style>
@@ -190,6 +294,57 @@ st.markdown(
             box-shadow: 0 20px 60px rgba(0,0,0,0.1);
             border: 1px solid rgba(255, 255, 255, 0.2);
             margin-top: 1rem;
+        }
+        
+        /* Voice input container */
+        .voice-input-container {
+            background: linear-gradient(135deg, rgba(168, 237, 234, 0.9) 0%, rgba(254, 214, 227, 0.9) 100%);
+            border-radius: 20px;
+            padding: 20px;
+            margin: 15px 0;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        /* Voice button styling */
+        .voice-button {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%) !important;
+            color: white !important;
+            border: none !important;
+            border-radius: 50px !important;
+            padding: 15px 30px !important;
+            font-weight: 600 !important;
+            font-size: 16px !important;
+            transition: all 0.3s ease !important;
+            box-shadow: 0 8px 25px rgba(255, 107, 107, 0.4) !important;
+            margin: 5px !important;
+        }
+        
+        .voice-button:hover {
+            transform: translateY(-3px) !important;
+            box-shadow: 0 15px 35px rgba(255, 107, 107, 0.6) !important;
+        }
+        
+        /* TTS button in chat bubbles */
+        .tts-button {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%) !important;
+            color: white !important;
+            border: none !important;
+            border-radius: 20px !important;
+            padding: 8px 15px !important;
+            font-size: 12px !important;
+            font-weight: 500 !important;
+            margin-top: 10px !important;
+            margin-left: 10px !important;
+            cursor: pointer !important;
+            transition: all 0.3s ease !important;
+            box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3) !important;
+        }
+        
+        .tts-button:hover {
+            transform: translateY(-2px) !important;
+            box-shadow: 0 8px 25px rgba(79, 172, 254, 0.5) !important;
         }
         
         /* Welcome card styling */
@@ -383,6 +538,16 @@ st.markdown(
             }
         }
         
+        /* Microphone animation */
+        @keyframes micPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+        
+        .mic-active {
+            animation: micPulse 1s ease-in-out infinite;
+        }
+        
         /* Title with rainbow text effect */
         h1 {
             background: linear-gradient(45deg, #667eea, #764ba2, #f093fb, #f5576c);
@@ -417,34 +582,10 @@ st.markdown(
             to { opacity: 1; transform: translateY(0); }
         }
         
-        /* Expander styling */
-        .streamlit-expanderHeader {
-            background: rgba(168, 237, 234, 0.4) !important;
-            border-radius: 15px !important;
-            color: #2d3748 !important;
-            font-weight: 600 !important;
-            border: 1px solid rgba(255, 255, 255, 0.3) !important;
-        }
-        
-        /* Floating elements */
-        .floating-hearts {
-            position: fixed;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: -1;
-        }
-        
-        .heart {
-            position: absolute;
-            font-size: 20px;
-            color: rgba(255, 255, 255, 0.1);
-            animation: float 6s ease-in-out infinite;
-        }
-        
-        @keyframes float {
-            0%, 100% { transform: translateY(0px) rotate(0deg); }
-            50% { transform: translateY(-20px) rotate(180deg); }
+        /* Audio player styling */
+        audio {
+            margin-top: 10px;
+            border-radius: 20px;
         }
         
         /* Mobile responsiveness */
@@ -462,15 +603,15 @@ st.markdown(
             h1 {
                 font-size: 2rem !important;
             }
+            
+            .voice-input-container {
+                padding: 15px;
+            }
         }
     </style>
     """,
     unsafe_allow_html=True
 )
-
-# Title and subtitle
-st.title("🌈 Mental Health First Aid Chat")
-st.markdown("<p class='subtitle'>Your compassionate companion for mental wellness support ✨💙</p>", unsafe_allow_html=True)
 
 # Initialize session state
 if "chat_history" not in st.session_state:
@@ -478,6 +619,60 @@ if "chat_history" not in st.session_state:
     # Add personalized welcome message
     welcome_msg = generate_welcome_message()
     st.session_state.chat_history.append(("Bot", welcome_msg, []))
+
+if "recognizer" not in st.session_state and VOICE_FEATURES_AVAILABLE:
+    st.session_state.recognizer = initialize_speech_recognition()
+
+# Title and subtitle
+st.title("🌈 Mental Health First Aid Chat")
+st.markdown("<p class='subtitle'>Your compassionate companion for mental wellness support ✨💙</p>", unsafe_allow_html=True)
+
+# Voice input section
+if VOICE_FEATURES_AVAILABLE:
+    st.markdown("""
+    <div class='voice-input-container'>
+        <h4 style='margin-bottom: 15px; color: #2d3748;'>🎤 Voice Input Available</h4>
+        <p style='margin-bottom: 15px; color: #4a5568;'>Click the button below to speak instead of typing!</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col_voice1, col_voice2, col_voice3 = st.columns([1, 2, 1])
+    with col_voice2:
+        if st.button("🎤 Start Voice Input", key="voice_input_btn", help="Click and speak your message"):
+            if st.session_state.recognizer:
+                with st.spinner("🎤 Listening for your voice..."):
+                    speech_text = listen_for_speech(st.session_state.recognizer)
+                    if speech_text:
+                        st.success(f"📝 Heard: '{speech_text}'")
+                        st.session_state.voice_input = speech_text
+                        # Process the voice input immediately
+                        user_input = speech_text
+                        
+                        try:
+                            # Check for crisis keywords
+                            is_crisis = detect_crisis_keywords(user_input)
+                            
+                            # Get response from chain
+                            response = qa_chain.invoke({"question": user_input})
+                            answer = response["answer"]
+                            sources = response.get("source_documents", [])
+                            
+                            # Add to chat history
+                            st.session_state.chat_history.append(("You", user_input))
+                            
+                            # If crisis detected, prepend crisis resources
+                            if is_crisis:
+                                crisis_response = f"Hey, I can see you might be going through something really tough right now. First things first - you're not alone in this. 💙\n\n{CRISIS_RESOURCES}\n\n{answer}"
+                                st.session_state.chat_history.append(("Bot", crisis_response, sources))
+                            else:
+                                st.session_state.chat_history.append(("Bot", answer, sources))
+                                
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error(f"Oops, something went wrong: {e}")
+else:
+    st.info("💡 Install voice packages (SpeechRecognition, gtts, pygame, pyaudio) to enable voice features!")
 
 # Enhanced sidebar with more resources
 with st.sidebar:
@@ -494,6 +689,16 @@ with st.sidebar:
     🤝 <a href="https://www.samhsa.gov/find-help/national-helpline" target="_blank">SAMHSA Helpline</a>
     </div>
     """, unsafe_allow_html=True)
+    
+    if VOICE_FEATURES_AVAILABLE:
+        st.markdown("### 🔊 Voice Features")
+        st.markdown("""
+        <div style="background: rgba(255, 255, 255, 0.8); padding: 15px; border-radius: 15px; margin: 10px 0;">
+        ✅ <strong>Voice Input:</strong> Available<br>
+        ✅ <strong>Text-to-Speech:</strong> Available<br><br>
+        <small>Look for 🔊 buttons next to bot responses to hear them spoken aloud!</small>
+        </div>
+        """, unsafe_allow_html=True)
     
     st.markdown("### 🌱 Daily Wellness")
     daily_tip = random.choice([
@@ -571,7 +776,7 @@ if user_input:
     except Exception as e:
         st.error(f"Oops, something went wrong: {e}")
 
-# Display chat with enhanced bubbles
+# Display chat with enhanced bubbles and TTS
 if len(st.session_state.chat_history) > 1:  # Skip the welcome message display here
     st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
     for i, entry in enumerate(st.session_state.chat_history[1:], 1):  # Skip first welcome message
@@ -588,6 +793,21 @@ if len(st.session_state.chat_history) > 1:  # Skip the welcome message display h
             else:
                 st.markdown(f"<div class='bot-bubble'>{bot_message.replace(chr(10), '<br>')}</div>", unsafe_allow_html=True)
 
+            # Add TTS button for bot responses
+            if VOICE_FEATURES_AVAILABLE:
+                col_tts1, col_tts2, col_tts3 = st.columns([0.15, 0.7, 0.15])
+                with col_tts1:
+                    if st.button("🔊", key=f"tts_{i}", help="Click to hear this response"):
+                        with st.spinner("🎵 Converting to speech..."):
+                            audio_data = text_to_speech(bot_message)
+                            if audio_data:
+                                audio_html = create_audio_player(audio_data, f"audio_{i}")
+                                if audio_html:
+                                    st.markdown(audio_html, unsafe_allow_html=True)
+                                    st.success("🎵 Audio ready! Click play above.")
+                            else:
+                                st.error("❌ Could not generate audio")
+
             # Show sources in collapsible section
             if source_docs:
                 with st.expander("📚 Sources from MHFA materials", expanded=False):
@@ -599,7 +819,7 @@ if len(st.session_state.chat_history) > 1:  # Skip the welcome message display h
     st.markdown("</div>", unsafe_allow_html=True)
 
 # Enhanced action buttons
-col1, col2, col3 = st.columns([1, 1, 1])
+col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
 
 with col1:
     if st.button("🔄 Fresh Start"):
@@ -621,6 +841,14 @@ with col3:
         st.session_state.chat_history.append(("Bot", wellness_msg, []))
         st.rerun()
 
+with col4:
+    if VOICE_FEATURES_AVAILABLE and st.button("🎤 Quick Voice"):
+        if st.session_state.recognizer:
+            speech_text = listen_for_speech(st.session_state.recognizer, duration=3)
+            if speech_text:
+                st.session_state.quick_voice = speech_text
+                st.success(f"Quick voice captured: '{speech_text}'")
+
 # Footer with additional support info
 st.markdown("---")
 st.markdown("""
@@ -629,3 +857,23 @@ st.markdown("""
     <p><em>If you're in crisis, please reach out to the resources in the sidebar or call 988</em></p>
 </div>
 """, unsafe_allow_html=True)
+
+# Installation instructions for voice features
+if not VOICE_FEATURES_AVAILABLE:
+    st.markdown("---")
+    st.info("""
+    ### 🎤 Enable Voice Features
+    
+    To add voice input and text-to-speech capabilities, install these packages:
+    
+    ```bash
+    pip install SpeechRecognition gtts pygame pyaudio
+    ```
+    
+    **Note:** On some systems, you may need additional setup:
+    - **Windows:** Install PyAudio from wheel: `pip install PyAudio`
+    - **macOS:** Install portaudio first: `brew install portaudio`
+    - **Linux:** Install system dependencies: `sudo apt-get install python3-pyaudio portaudio19-dev`
+    
+    After installation, restart the app to enable voice features! 🎉
+    """)
