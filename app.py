@@ -42,13 +42,18 @@ def initialize_qa_chain():
     
     custom_prompt = PromptTemplate(
         input_variables=["context", "question", "chat_history"],
-        template="""You are a compassionate mental health first aid assistant. Speak with warmth, empathy, and understanding while providing evidence-based guidance.
+        template="""
+    You are a compassionate mental health first aid assistant. Speak with warmth, empathy, and understanding while providing evidence-based guidance.
 
-Use the following context: {context}
-Previous conversation: {chat_history}
-Question: {question}
+    Instructions:
+    - Do NOT start your reply with "Response:", "Answer:", or any similar label. Start directly.
+    - Keep it concise, caring, and actionable.
+    - If this seems like a crisis, prioritize safety resources.
 
-Respond with genuine care and practical support. If this seems like a crisis, prioritize safety resources."""
+    Use the following context: {context}
+    Previous conversation: {chat_history}
+    Question: {question}
+    """
     )
     
     llm = OpenAI(temperature=0.7, openai_api_key=os.getenv("OPENAI_API_KEY"))
@@ -494,7 +499,6 @@ if user_input:
     # Add user message immediately to chat
     st.session_state.chat_history.append(("user", user_input))
     st.session_state.generating_response = True
-    st.rerun()
 
 # Process the response if we're in generating state
 if st.session_state.generating_response and st.session_state.chat_history:
