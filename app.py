@@ -302,6 +302,13 @@ if "qa_chain" not in st.session_state:
 if "generating_response" not in st.session_state:
     st.session_state.generating_response = False
 
+# NEW: Track which messages have had audio generated
+if "audio_generated" not in st.session_state:
+    st.session_state.audio_generated = set()
+
+if "pending_audio" not in st.session_state:
+    st.session_state.pending_audio = None
+
 # Header
 st.title("💙 Mental Health Support")
 st.markdown("<p class='subtitle'>A safe space for mental wellness guidance</p>", unsafe_allow_html=True)
@@ -452,11 +459,16 @@ def process_voice_input():
             else:
                 st.session_state.chat_history.append(("bot", answer))
             
+            # Mark that we need to generate audio for the new bot message
+            if VOICE_FEATURES_AVAILABLE:
+                message_id = len(st.session_state.chat_history) - 1
+                st.session_state.pending_audio = message_id
+            
             st.rerun()
         except Exception as e:
             st.error(f"Something went wrong: {e}")
 
-# Chat display with auto voice and progress bars
+# Chat display - FIXED VERSION
 if st.session_state.chat_history:
     for i, (role, message) in enumerate(st.session_state.chat_history):
         if role == "user":
@@ -466,17 +478,20 @@ if st.session_state.chat_history:
                 st.markdown(f'<div class="crisis-alert">{message}</div>', unsafe_allow_html=True)
             else:
                 st.markdown(f'<div class="bot-message">{message}</div>', unsafe_allow_html=True)
-            
-            # Auto-generate audio for bot messages if voice is available
-            if VOICE_FEATURES_AVAILABLE and role == "bot":
-                # Use a unique key for each message to avoid conflicts
-                audio_key = f"audio_{i}_{hash(message[:50])}"
-                
-                # Only generate audio for the latest bot message to avoid multiple audio generations
-                if i == len(st.session_state.chat_history) - 1:
-                    audio_html = text_to_speech_openai_with_progress(message)
-                    if audio_html:
-                        st.markdown(audio_html, unsafe_allow_html=True)
+
+# Handle pending audio generation AFTER chat display
+if VOICE_FEATURES_AVAILABLE and st.session_state.pending_audio is not None:
+    message_index = st.session_state.pending_audio
+    if message_index < len(st.session_state.chat_history):
+        role, message = st.session_state.chat_history[message_index]
+        if role == "bot" and message_index not in st.session_state.audio_generated:
+            audio_html = text_to_speech_openai_with_progress(message)
+            if audio_html:
+                st.markdown(audio_html, unsafe_allow_html=True)
+            st.session_state.audio_generated.add(message_index)
+    
+    # Clear pending audio
+    st.session_state.pending_audio = None
 
 # Show loading bubble if bot is generating response
 if st.session_state.generating_response:
@@ -521,6 +536,11 @@ if st.session_state.generating_response and st.session_state.chat_history:
             else:
                 st.session_state.chat_history.append(("bot", answer))
             
+            # Mark that we need to generate audio for the new bot message
+            if VOICE_FEATURES_AVAILABLE:
+                message_id = len(st.session_state.chat_history) - 1
+                st.session_state.pending_audio = message_id
+            
             # Stop generating
             st.session_state.generating_response = False
             st.rerun()
@@ -537,8 +557,13 @@ with col1:
     if st.button("🔄 New Conversation", use_container_width=True):
         st.session_state.chat_history = []
         st.session_state.generating_response = False
+        st.session_state.audio_generated = set()  # Reset audio tracking
+        st.session_state.pending_audio = None
         welcome_msg = random.choice(WELCOME_MESSAGES)
         st.session_state.chat_history.append(("bot", welcome_msg))
+        # Mark that we need to generate audio for the welcome message
+        if VOICE_FEATURES_AVAILABLE:
+            st.session_state.pending_audio = 0
         st.rerun()
 
 with col2:
@@ -546,12 +571,16 @@ with col2:
         affirmations = [
             "You are worthy of love and kindness 💕",
             "Your feelings are valid 🌙",
-            "You have survived 100% of your difficult days ✨",
+            "You have survived 100 percent of your difficult days ✨",
             "You are stronger than you know 💪",
             "You belong here and you matter 🌍"
         ]
         affirmation = random.choice(affirmations)
         st.session_state.chat_history.append(("bot", f"Here's a gentle reminder: {affirmation}"))
+        # Mark that we need to generate audio for the affirmation
+        if VOICE_FEATURES_AVAILABLE:
+            message_id = len(st.session_state.chat_history) - 1
+            st.session_state.pending_audio = message_id
         st.rerun()
 
 # Footer
